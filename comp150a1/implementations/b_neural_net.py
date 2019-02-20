@@ -83,8 +83,7 @@ class TwoLayerNet(object):
         Returns:
         - loss: softmax loss for this batch of training samples.
         """
-        test = tf.reduce_sum(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=scores, labels=y))
-        return test
+        return tf.reduce_sum(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=scores, labels=y))
 
     def compute_scores(self, X):
         """
@@ -234,7 +233,7 @@ class TwoLayerNet(object):
         """
 
         y_pred = np.argmax(self.session.run(
-            self.predict_node, feed_dict={self.x_test: X}))
+            self.predict_node, feed_dict={self.x_test: X}), axis=1)
 
         ###########################################################################
         # TODO: Implement this function.                                          #
