@@ -200,7 +200,32 @@ def conv_forward_naive(x, w, b, conv_param):
     # TODO: Implement the convolutional forward pass.                         #
     # Hint: you can use the function np.pad for padding.                      #
     ###########################################################################
-    pass
+    pad_width: int = conv_param['pad']
+    stride: int = conv_param['stride']
+    padded_x: np.array = np.pad(x, [(0,), (pad_width,), (pad_width,), (0,)], 'constant')
+
+    num_images, img_h, img_w, img_c = padded_x.shape
+    filter_h, filter_w, filter_c, num_filters = w.shape
+
+    output_h = (1 + img_h + 2*pad_width - filter_h) // stride
+    output_w = (1 + img_w + 2*pad_width - filter_w) // stride
+
+    output: np.array = np.zeros((num_images, output_h, output_w, num_filters), dtype=np.float32)
+    for n in range(num_images):
+        current_h = 0
+        for hh in range(0, img_h - filter_h + 1, stride):
+            current_w = 0
+            for ww in range(0, img_w - filter_w + 1, stride):
+                for f in range(num_filters):
+                    # print(padded_x[n, hh:hh+filter_h, ww:ww+filter_w, :].shape)
+                    # print(w[:, :, :, f].shape)
+                    output[n, current_h, current_w, f] = np.sum(padded_x[n, hh:hh+filter_h, ww:ww+filter_w, :] * w[:, :, :, f]) + b[f]
+                    # print(np.sum(padded_x[n, hh:hh+filter_h, ww:ww+filter_w, :] * w[:, :, :, f]) + b[f])
+                current_w += 1
+            current_h += 1
+
+
+    out = output
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -231,7 +256,27 @@ def max_pool_forward_naive(x, pool_param):
     ###########################################################################
     # TODO: Implement the max-pooling forward pass                            #
     ###########################################################################
-    pass
+    pool_h: int = pool_param['pool_height']
+    pool_w: int = pool_param['pool_width']
+    stride: int = pool_param['stride']
+    x_n, x_h, x_w, x_c = x.shape
+    h_prime: int = 1 + (x_h - pool_h) // stride
+    w_prime: int = 1 + (x_w - pool_w) // stride
+
+
+    output: np.array = np.zeros((x_n, h_prime, w_prime, x_c), dtype=np.float32)
+    for n in range(x_n):
+        current_h = 0
+        for hh in range(0, x_h - pool_h + 1, stride):
+            current_w = 0
+            for ww in range(0, x_w - pool_w + 1, stride):
+                for c in range(x_c):
+                    output[n, current_h, current_w, c] = np.max(x[n, hh:hh + pool_h, ww:ww + pool_w, c])
+                current_w += 1
+            current_h += 1
+
+
+    out = output
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################

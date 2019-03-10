@@ -209,8 +209,10 @@ class FullyConnectedNet(object):
         else:
             dropout = tf.nn.dropout(linear_trans,
                                     self.placeholders['keep_prob'])
-            normalized = tf.layers.batch_normalization(
-                dropout, training=self.placeholders['training_mode'])
+            normalized = dropout
+            if self.options['use_bn']:
+                normalized = tf.layers.batch_normalization(
+                    dropout, training=self.placeholders['training_mode'])
 
             linear_trans = normalized
             # non-linear transformation
