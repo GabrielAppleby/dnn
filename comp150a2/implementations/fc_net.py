@@ -207,18 +207,13 @@ class FullyConnectedNet(object):
 
         # otherwise optionally apply batch normalization, relu, and dropout to all layers 
         else:
-            dropout = tf.nn.dropout(linear_trans,
-                                    self.placeholders['keep_prob'])
-            normalized = dropout
+            hidden = linear_trans
+            if self.options['use_dropout']:
+                hidden = tf.nn.dropout(hidden, self.placeholders['keep_prob'])
             if self.options['use_bn']:
-                normalized = tf.layers.batch_normalization(
-                    dropout, training=self.placeholders['training_mode'])
-
-            linear_trans = normalized
-            # non-linear transformation
-            hidden = tf.nn.relu(linear_trans)
-
-        
+                hidden = tf.layers.batch_normalization(
+                    hidden, training=self.placeholders['training_mode'])
+            hidden = tf.nn.relu(hidden)
     scores = hidden
 
     return scores
