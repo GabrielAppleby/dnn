@@ -24,8 +24,7 @@ class Config(object):
     information parameters. Model objects are passed a Config() object at
     instantiation.
     """
-    batch_size = 1452
-    embed_size = 64
+    batch_size = 64
     hidden_size = 560
     num_steps = 10
     max_epochs = 50
@@ -308,13 +307,13 @@ def generate_text(session, model, config, starting_text='<eos>',
     """
     state = session.run(model.initial_state)
     # Imagine tokens as a batch size of one, length of len(tokens[0])
-    tokens = np.array([model.vocab.encode(word) for word in starting_text.split()])
-    tokens = np.expand_dims(tokens, axis=1)
+    tokens = [model.vocab.encode(word) for word in starting_text.split()]
+    tokens = [tokens[-1]]
     for i in range(stop_length):
         ### YOUR CODE HERE
-        print(tokens[0])
+        actual_input = [[tokens[i]]]
         feed = {model.initial_state: state,
-                model.input_placeholder: tokens,
+                model.input_placeholder: actual_input,
                 model.dropout_placeholder: 1.0}
         y_pred, state = session.run(
             [model.predictions, model.final_state],
