@@ -13,10 +13,6 @@ from tensorflow.contrib.seq2seq import sequence_loss
 from model import LanguageModel
 
 
-# If running on Gabe's laptop..
-import os
-os.environ['KMP_DUPLICATE_LIB_OK']='True'
-
 # Let's set the parameters of our model
 # http://arxiv.org/pdf/1409.2329v4.pdf shows parameters that would achieve near
 # SotA numbers
@@ -28,14 +24,14 @@ class Config(object):
     information parameters. Model objects are passed a Config() object at
     instantiation.
     """
-    batch_size = 64
-    embed_size = 50
-    hidden_size = 100
+    batch_size = 1452
+    embed_size = 64
+    hidden_size = 560
     num_steps = 10
-    max_epochs = 16
+    max_epochs = 50
     early_stopping = 2
-    dropout = 0.9
-    lr = 0.001
+    dropout = .88
+    lr = 0.01
 
 
 class RNNLM_Model(LanguageModel):
@@ -183,9 +179,10 @@ class RNNLM_Model(LanguageModel):
         Returns:
           train_op: The Op for training.
         """
-        adam = tf.train.AdamOptimizer(self.config.lr)
-        train_op = adam.minimize(loss)
-        return train_op
+        with tf.variable_scope('opt', reuse=tf.AUTO_REUSE):
+            adam = tf.train.AdamOptimizer(self.config.lr)
+            train_op = adam.minimize(loss)
+            return train_op
 
     def __init__(self, config):
         self.config = config
@@ -244,11 +241,11 @@ class RNNLM_Model(LanguageModel):
           outputs: List of length num_steps, each of whose elements should be
                    a tensor of shape (batch_size, hidden_size)
         """
-        self.initial_state = tf.zeros(
-            (self.config.batch_size, self.config.hidden_size))
-
-        rnn_cell = tf.nn.rnn_cell.BasicRNNCell(
-            self.config.hidden_size)
+        rnn_cell = tf.contrib.rnn.LayerNormBasicLSTMCell(
+            self.config.hidden_size,
+            dropout_keep_prob=self.dropout_placeholder)
+        self.initial_state = rnn_cell.zero_state(
+            self.config.batch_size, tf.float32)
         rnn_outputs, final_s = tf.nn.dynamic_rnn(
             rnn_cell,
             inputs,
@@ -266,7 +263,7 @@ class RNNLM_Model(LanguageModel):
         total_steps = sum(
             1 for x in ptb_iterator(data, config.batch_size, config.num_steps))
         total_loss = []
-        state = self.initial_state.eval()
+        state = session.run(self.initial_state)
         for step, (x, y) in enumerate(
                 ptb_iterator(data, config.batch_size, config.num_steps)):
             # We need to pass in the initial state and retrieve the final state to give
@@ -307,13 +304,22 @@ def generate_text(session, model, config, starting_text='<eos>',
       starting_text: Initial text passed to model.
     Returns:
       output: List of word idxs
+      output: List of word idxs
     """
-    state = model.initial_state.eval()
+    state = session.run(model.initial_state)
     # Imagine tokens as a batch size of one, length of len(tokens[0])
-    tokens = [model.vocab.encode(word) for word in starting_text.split()]
+    tokens = np.array([model.vocab.encode(word) for word in starting_text.split()])
+    tokens = np.expand_dims(tokens, axis=1)
     for i in range(stop_length):
         ### YOUR CODE HERE
-        raise NotImplementedError
+        print(tokens[0])
+        feed = {model.initial_state: state,
+                model.input_placeholder: tokens,
+                model.dropout_placeholder: 1.0}
+        y_pred, state = session.run(
+            [model.predictions, model.final_state],
+            feed_dict=feed)
+        y_pred = y_pred[-1]
         ### END YOUR CODE
         next_word_idx = sample(y_pred[0], temperature=temp)
         tokens.append(next_word_idx)
@@ -339,7 +345,7 @@ def test_RNNLM():
         model = RNNLM_Model(config)
         # This instructs gen_model to reuse the same variables as the model above
         scope.reuse_variables()
-        # gen_model = RNNLM_Model(gen_config)
+        gen_model = RNNLM_Model(gen_config)
 
     init = tf.initialize_all_variables()
     saver = tf.train.Saver()
@@ -375,11 +381,11 @@ def test_RNNLM():
 
         starting_snippets = ['in boston', 'they have', 'please', 'today',
                              'the president']
-        # for starting_text in starting_snippets:
-        #     print('\n')
-        #     print(' '.join(generate_sentence(
-        #         session, gen_model, gen_config, starting_text=starting_text,
-        #         temp=1.0)))
+        for starting_text in starting_snippets:
+            print('\n')
+            print(' '.join(generate_sentence(
+                session, gen_model, gen_config, starting_text=starting_text,
+                temp=1.0)))
 
 
 if __name__ == "__main__":
