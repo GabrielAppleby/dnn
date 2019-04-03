@@ -25,11 +25,12 @@ class Config(object):
     instantiation.
     """
     batch_size = 64
-    hidden_size = 555
+    embedding_size = 50
+    hidden_size = 100
     num_steps = 10
     max_epochs = 50
     early_stopping = 2
-    dropout = .92
+    dropout = .9
     lr = 0.001
 
 
@@ -101,13 +102,16 @@ class RNNLM_Model(LanguageModel):
           L: (len(self.vocab), embed_size)
 
         Returns:
-          inputs: [batch_size, max_time, ...]
+          inputs: List of length num_steps, each of whose elements should be
+          a tensor of shape (batch_size, embed_size).
         """
         # The embedding lookup is currently only implemented for the CPU
         with tf.device('/cpu:0'):
             inputs = tf.nn.embedding_lookup(
                 self.embedding, self.input_placeholder)
-            return inputs
+            split_inputs = tf.split(inputs, self.config.num_steps, axis=1)
+            squeezed_split = [tf.squeeze(x, axis=1) for x in split_inputs]
+            return squeezed_split
 
     def add_projection(self, rnn_outputs):
         """Adds a projection layer.
@@ -133,11 +137,8 @@ class RNNLM_Model(LanguageModel):
             vocab_len = len(self.vocab)
             U = tf.get_variable(
                 'U', (self.config.hidden_size, vocab_len), tf.float32)
-            b_s = tf.get_variable('b_2', (vocab_len,), tf.float32)
-            time_steps = tf.split(rnn_outputs, self.config.num_steps, axis=1)
-            squeezed_times_steps = [
-                tf.squeeze(step, axis=1) for step in time_steps]
-            for step in squeezed_times_steps:
+            b_s = tf.get_variable('b_s', (vocab_len,), tf.float32)
+            for step in rnn_outputs:
                 outputs.append(tf.nn.bias_add(tf.matmul(step, U), b_s))
         return outputs
 
@@ -240,20 +241,78 @@ class RNNLM_Model(LanguageModel):
           outputs: List of length num_steps, each of whose elements should be
                    a tensor of shape (batch_size, hidden_size)
         """
-        with tf.variable_scope('model', reuse=tf.AUTO_REUSE) as scope:
-            rnn_cell = tf.nn.rnn_cell.GRUCell(
-                self.config.hidden_size, reuse=tf.AUTO_REUSE)
-            rnn_cell = tf.nn.rnn_cell.DropoutWrapper(rnn_cell)
-            self.initial_state = rnn_cell.zero_state(
-                self.config.batch_size, tf.float32)
-            rnn_outputs, final_s = tf.nn.dynamic_rnn(
-                rnn_cell,
-                inputs,
-                initial_state=self.initial_state,
-                dtype=tf.float32,
-                scope=scope)
-            self.final_state = final_s
-            return rnn_outputs
+        h_t_list = []
+        self.initial_state = tf.zeros(
+            (self.config.batch_size, self.config.hidden_size),
+            tf.float32)
+        with tf.variable_scope('model', reuse=tf.AUTO_REUSE):
+            wtr_x = tf.get_variable('wtr_x',
+                                    (self.config.embedding_size,
+                                     self.config.hidden_size),
+                                    tf.float32)
+            wtr_h = tf.get_variable('wtr_h',
+                                    (self.config.hidden_size,
+                                     self.config.hidden_size),
+                                    tf.float32)
+            biasr = tf.get_variable(
+                'biasr', (self.config.hidden_size,), tf.float32)
+
+            wtu_x = tf.get_variable('wtu_x',
+                                    (self.config.embedding_size,
+                                     self.config.hidden_size),
+                                    tf.float32)
+            wtu_h = tf.get_variable('wtu_h',
+                                    (self.config.hidden_size,
+                                     self.config.hidden_size),
+                                    tf.float32)
+            biasu = tf.get_variable(
+                'biasu', (self.config.hidden_size,), tf.float32)
+
+            wtc_x = tf.get_variable('wtc_x',
+                                    (self.config.embedding_size,
+                                     self.config.hidden_size),
+                                    tf.float32)
+            wtc_h = tf.get_variable('wtc_h',
+                                    (self.config.hidden_size,
+                                     self.config.hidden_size),
+                                    tf.float32)
+            biasc = tf.get_variable(
+                'biasc', (self.config.hidden_size,), tf.float32)
+
+            h_t_minus_1 = self.initial_state
+            for x_t in inputs:
+                x_t = tf.nn.dropout(x_t, self.config.dropout)
+
+                r_t_one = tf.matmul(h_t_minus_1, wtr_h)
+                r_t_two = tf.matmul(x_t, wtr_x)
+                r_t_three = r_t_one + r_t_two + biasr
+                r_t = tf.sigmoid(r_t_three)
+
+                # u_t
+                u_t_one = tf.matmul(h_t_minus_1, wtu_h)
+                u_t_two = tf.matmul(x_t, wtu_x)
+                u_t_three = u_t_one + u_t_two + biasu
+                u_t = tf.sigmoid(u_t_three)
+
+                # c_t
+                c_t_one = tf.multiply(h_t_minus_1, r_t)
+                c_t_two = tf.matmul(c_t_one, wtc_h)
+                c_t_three = tf.matmul(x_t, wtc_x)
+                c_t_four = c_t_two + c_t_three + biasc
+                c_t = tf.tanh(c_t_four)
+
+                # h_t
+                h_t_one = tf.multiply(h_t_minus_1, u_t)
+                h_t_two = 1 - u_t
+                h_t_three = tf.multiply(c_t, h_t_two)
+                h_t = h_t_one + h_t_three
+
+                h_t_minus_1 = h_t
+                h_t = tf.nn.dropout(h_t, self.config.dropout)
+                h_t_list.append(h_t)
+
+        self.final_state = h_t_list[-1]
+        return h_t_list
 
     def run_epoch(self, session, data, train_op=None, verbose=10):
         config = self.config
@@ -341,7 +400,7 @@ def test_RNNLM():
     # gen_config = deepcopy(config)
     # gen_config.batch_size = gen_config.num_steps = 1
 
-    hidden_sizes = [480]
+    hidden_sizes = [40, 80, 120]
     drop_outs = [.9]
 
     for hidden_size in hidden_sizes:
@@ -352,9 +411,10 @@ def test_RNNLM():
             config.hidden_size = hidden_size
 
             # We create the training model and generative model
-            with tf.variable_scope('RNNLM', reuse=tf.AUTO_REUSE):
+            with tf.variable_scope('RNNLM') as scope:
                 model = RNNLM_Model(config)
                 # This instructs gen_model to reuse the same variables as the model above
+                scope.reuse_variables()
                 # gen_model = RNNLM_Model(gen_config)
 
             init = tf.initialize_all_variables()
