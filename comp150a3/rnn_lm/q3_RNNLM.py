@@ -25,11 +25,12 @@ class Config(object):
     instantiation.
     """
     batch_size = 64
-    hidden_size = 555
+    embedding_size = 50
+    hidden_size = 100
     num_steps = 10
     max_epochs = 50
     early_stopping = 2
-    dropout = .92
+    dropout = .9
     lr = 0.001
 
 
@@ -48,8 +49,6 @@ class RNNLM_Model(LanguageModel):
         self.encoded_test = np.array(
             [self.vocab.encode(word) for word in get_ptb_dataset('test')],
             dtype=np.int32)
-        self.embedding = np.genfromtxt('data/ner/wordVectors.txt',
-                                       dtype=np.float32)
 
         if debug:
             num_debug = 1024
@@ -105,8 +104,10 @@ class RNNLM_Model(LanguageModel):
         """
         # The embedding lookup is currently only implemented for the CPU
         with tf.device('/cpu:0'):
+            embedding = tf.get_variable(
+                "embedding", (len(self.vocab), self.config.embedding_size))
             inputs = tf.nn.embedding_lookup(
-                self.embedding, self.input_placeholder)
+                embedding, self.input_placeholder)
             return inputs
 
     def add_projection(self, rnn_outputs):
@@ -133,28 +134,28 @@ class RNNLM_Model(LanguageModel):
             vocab_len = len(self.vocab)
             U = tf.get_variable(
                 'U', (self.config.hidden_size, vocab_len), tf.float32)
-            b_s = tf.get_variable('b_2', (vocab_len,), tf.float32)
+            b_2 = tf.get_variable('b_2', (vocab_len,), tf.float32)
             time_steps = tf.split(rnn_outputs, self.config.num_steps, axis=1)
             squeezed_times_steps = [
                 tf.squeeze(step, axis=1) for step in time_steps]
             for step in squeezed_times_steps:
-                outputs.append(tf.nn.bias_add(tf.matmul(step, U), b_s))
+                outputs.append(tf.nn.bias_add(tf.matmul(step, U), b_2))
         return outputs
 
     def add_loss_op(self, output):
         """Adds loss ops to the computational graph.
 
-        Hint: Use tensorflow.python.ops.seq2seq.sequence_loss to implement sequence loss.
+        Hint: Use tensorflow.python.ops.seq2seq.sequence_loss to implement
+        sequence loss.
 
         Args:
           output: A tensor of shape (None, self.vocab)
         Returns:
           loss: A 0-d tensor (scalar)
         """
-        output_reshaped = tf.reshape(output, (
-            self.config.batch_size, self.config.num_steps, len(self.vocab)))
+        output = tf.stack(output, 1)
         loss = sequence_loss(
-            output_reshaped,
+            output,
             self.labels_placeholder,
             tf.ones((self.config.batch_size, self.config.num_steps)))
         return loss
@@ -198,8 +199,7 @@ class RNNLM_Model(LanguageModel):
                             self.outputs]
         # Reshape the output into len(vocab) sized chunks - the -1 says as many as
         # needed to evenly divide
-        output = tf.reshape(tf.concat(self.outputs, 1), [-1, len(self.vocab)])
-        self.calculate_loss = self.add_loss_op(output)
+        self.calculate_loss = self.add_loss_op(self.outputs)
         self.train_step = self.add_training_op(self.calculate_loss)
 
     def add_model(self, inputs):
@@ -337,66 +337,56 @@ def generate_sentence(session, model, config, *args, **kwargs):
 
 
 def test_RNNLM():
-    # config = Config()
-    # gen_config = deepcopy(config)
-    # gen_config.batch_size = gen_config.num_steps = 1
+    config = Config()
+    gen_config = deepcopy(config)
+    gen_config.batch_size = gen_config.num_steps = 1
 
-    hidden_sizes = [480]
-    drop_outs = [.9]
+    # We create the training model and generative model
+    with tf.variable_scope('RNNLM', reuse=tf.AUTO_REUSE):
+        model = RNNLM_Model(config)
+        # This instructs gen_model to reuse the same variables as the model above
+        gen_model = RNNLM_Model(gen_config)
 
-    for hidden_size in hidden_sizes:
-        for drop_out in drop_outs:
-            tf.reset_default_graph()
-            config = Config()
-            config.dropout = drop_out
-            config.hidden_size = hidden_size
+    init = tf.initialize_all_variables()
+    saver = tf.train.Saver()
 
-            # We create the training model and generative model
-            with tf.variable_scope('RNNLM', reuse=tf.AUTO_REUSE):
-                model = RNNLM_Model(config)
-                # This instructs gen_model to reuse the same variables as the model above
-                # gen_model = RNNLM_Model(gen_config)
+    with tf.Session() as session:
+        best_val_pp = float('inf')
+        best_val_epoch = 0
 
-            init = tf.initialize_all_variables()
-            saver = tf.train.Saver()
+        session.run(init)
+        for epoch in range(config.max_epochs):
+            print('Epoch {}'.format(epoch))
+            start = time.time()
+            ###
+            train_pp = model.run_epoch(
+                session, model.encoded_train,
+                train_op=model.train_step)
+            valid_pp = model.run_epoch(session, model.encoded_valid)
+            print('Training perplexity: {}'.format(train_pp))
+            print('Validation perplexity: {}'.format(valid_pp))
+            if valid_pp < best_val_pp:
+                best_val_pp = valid_pp
+                best_val_epoch = epoch
+                saver.save(session, './ptb_rnnlm.weights')
+            if epoch - best_val_epoch > config.early_stopping:
+                break
+            print('Total time: {}'.format(time.time() - start))
 
-            with tf.Session() as session:
-                best_val_pp = float('inf')
-                best_val_epoch = 0
+        saver.restore(session, 'ptb_rnnlm.weights')
+        test_pp = model.run_epoch(session, model.encoded_test)
+        print('=-=' * 5)
+        print('Test perplexity: {}'.format(test_pp))
+        print('=-=' * 5)
 
-                session.run(init)
-                for epoch in range(config.max_epochs):
-                    print('Epoch {}'.format(epoch))
-                    start = time.time()
-                    ###
-                    train_pp = model.run_epoch(
-                        session, model.encoded_train,
-                        train_op=model.train_step)
-                    valid_pp = model.run_epoch(session, model.encoded_valid)
-                    print('Training perplexity: {}'.format(train_pp))
-                    print('Validation perplexity: {}'.format(valid_pp))
-                    if valid_pp < best_val_pp:
-                        best_val_pp = valid_pp
-                        best_val_epoch = epoch
-                        saver.save(session, './ptb_rnnlm.weights')
-                    if epoch - best_val_epoch > config.early_stopping:
-                        break
-                    print('Total time: {}'.format(time.time() - start))
+        starting_snippets = ['in boston', 'they have', 'please', 'today',
+                             'the president']
+        for starting_text in starting_snippets:
+            print('\n')
+            print(' '.join(generate_sentence(
+                session, gen_model, gen_config, starting_text=starting_text,
+                temp=1.0)))
 
-                saver.restore(session, 'ptb_rnnlm.weights')
-                test_pp = model.run_epoch(session, model.encoded_test)
-                print('=-=' * 5)
-                print('Test perplexity: {}'.format(test_pp))
-                print('=-=' * 5)
-
-                starting_snippets = ['in boston', 'they have', 'please', 'today',
-                                     'the president']
-                # for starting_text in starting_snippets:
-                #     print('\n')
-                #     print(' '.join(generate_sentence(
-                #         session, gen_model, gen_config, starting_text=starting_text,
-                #         temp=1.0)))
-                #
 
 if __name__ == "__main__":
     test_RNNLM()
